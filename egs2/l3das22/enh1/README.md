@@ -9,12 +9,21 @@
   - Commit date: `Fri May 20 12:19:54 2022 +0000`
 
 
+## enh_train_enh_ineube_raw
+
+config: conf/tuning/train_enh_ineube.yaml
+
+|dataset|STOI|SAR|SDR|SIR|SI_SNR|WER|STOI|TASK 1 METRIC|
+|---|---|---|---|---|---|---|---|---|
+|enhanced_dev_multich|95.62|15.00|15.00|0.00|13.64|5.93|0.956|0.948|
+|enhanced_test_multich|95.70|14.59|14.59|0.00|13.34|4.85|0.957|0.954|
+
+
 ## enh_train_enh_dprnntac_fasnet_raw
 
 config: conf/tuning/train_enh_dprnntac_fasnet.yaml
 
-|dataset|STOI|SAR|SDR|SIR|SI_SNR|
-|---|---|---|---|---|---|
-|enhanced_dev_multich|73.26|3.35|3.35|0.00|-4.07|
-|enhanced_test_multich|73.61|2.64|2.64|0.00|-5.40|
-
+|dataset|STOI|SAR|SDR|SIR|SI_SNR|WER|STOI|TASK 1 METRIC|
+|---|---|---|---|---|---|---|---|---|
+|enhanced_dev_multich|73.58|3.52|3.52|0.00|-3.47|38.91|0.736|0.673|
+|enhanced_test_multich|73.93|2.83|2.83|0.00|-4.79|35.12|0.739|0.694|
