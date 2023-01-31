@@ -1,4 +1,4 @@
-./install_s3prl.sh
+./installers/install_s3prl.sh
 pip install git+https://github.com/popcornell/lhotse@master
 # cupy
 conda install -yc conda-forge cupy=10.2
