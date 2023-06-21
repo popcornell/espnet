@@ -78,7 +78,7 @@ then
 fi
 
 
-if [ $download_baseline_diarization == 1 ]; then
+if [[ $download_baseline_diarization == 1 ]]; then
   log "Using organizer-provided JSON manifests from the baseline diarization system."
   if [ ! -d CHiME7DASRDiarizationBaselineJSONs ]; then
       git clone https://github.com/popcornell/CHiME7DASRDiarizationBaselineJSONs
