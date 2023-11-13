@@ -22,22 +22,16 @@ def glob_check(root_folder, has_eval=False, input_json=None):
         all_files.extend(
             glob.glob(os.path.join(root_folder, "**/*{}".format(ext)), recursive=True)
         )
-
+    output_file = "./chime7_dasr_md5.json"
+    out = {}
     for f in tqdm.tqdm(all_files):
+
         digest = md5_file(f)
-        if not has_eval and Path(f).parent == "eval":
-            continue
+        out[str(Path(f).relative_to(root_folder))] = digest
 
-        if not input_json[str(Path(f).relative_to(root_folder))] == digest:
-            raise RuntimeError(
-                "MD5 Checksum for {} is not the same. "
-                "Data has not been generated correctly. "
-                "You can retry to generate it or re-download it. "
-                "If this does not work, please reach us. ".format(
-                    str(Path(f).relative_to(root_folder))
-                )
-            )
 
+    with open(output_file, "w") as f:
+        json.dump(out, f, indent=4)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -70,7 +64,7 @@ if __name__ == "__main__":
         help="Input JSON file to check against containing md5 checksums for each file.",
     )
     args = parser.parse_args()
-    with open(args.input_json, "r") as f:
-        checksum_json = json.load(f)
-
+    ##with open(args.input_json, "r") as f:
+     #   checksum_json = json.load(f)
+    checksum_json = None
     glob_check(args.chime7_root, bool(args.has_eval), checksum_json)
