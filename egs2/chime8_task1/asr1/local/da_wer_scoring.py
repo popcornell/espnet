@@ -633,7 +633,7 @@ if __name__ == "__main__":
     spk_wise_df = []
     sess_wise_df = []
     scenario_wise_df = []
-    scenarios = ["notsofar1"]#"chime6", "dipco", "mixer6"]
+    scenarios = ["dipco"]
     Path(args.output_folder).mkdir(exist_ok=True)
     for indx, scenario in enumerate(scenarios):
         hyp_json = os.path.join(args.hyp_folder, scenario + ".json")
