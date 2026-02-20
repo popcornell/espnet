@@ -27,7 +27,8 @@ class AverageCheckpointsCallback(Callback):
         - Averages the model parameters (keys starting with `model.`).
         - Ignores or simply accumulates integer-type parameters
           (e.g., BatchNorm's `num_batches_tracked`).
-        - Saves the averaged model as a `.pth` file in `output_dir`.
+        - Saves the averaged model as a `.ckpt` file in `output_dir` (Lightning-style
+          with state_dict + hyper_parameters from one source) so the same loader works.
 
     Args:
         output_dir (str or Path):
@@ -39,7 +40,7 @@ class AverageCheckpointsCallback(Callback):
     Notes:
         - Only keys that start with `model.` are included in the averaging.
         - The final filename will be:
-            `{monitor_name}.ave_{K}best.pth`
+            `{monitor_name}.ave_{K}best.ckpt`
         - This callback only runs on the global rank 0 process
             (for distributed training).
 
@@ -66,10 +67,14 @@ class AverageCheckpointsCallback(Callback):
 
                 avg_state_dict = None
                 reference_keys = None
+                source_ckpt_full = None  # keep first full ckpt for hyper_parameters
                 for ckpt_path in checkpoints:
-                    state_dict = torch.load(
+                    ckpt_full = torch.load(
                         ckpt_path, map_location="cpu", weights_only=False
                     )
+                    if source_ckpt_full is None:
+                        source_ckpt_full = ckpt_full
+                    state_dict = ckpt_full
 
                     # for deepspeed checkpoints
                     if "module" in state_dict:
@@ -97,9 +102,6 @@ class AverageCheckpointsCallback(Callback):
                     if str(avg_state_dict[k].dtype).startswith("torch.int"):
                         # For int type, not averaged, but only accumulated.
                         # e.g. BatchNorm.num_batches_tracked
-                        # (If there are any cases that requires averaging
-                        #  or the other reducing method, e.g. max/min, for integer type,
-                        #  please report.)
                         logging.info(
                             "The following parameters were only accumulated, "
                             f"not averaged: {k}"
@@ -108,18 +110,19 @@ class AverageCheckpointsCallback(Callback):
                     else:
                         avg_state_dict[k] = avg_state_dict[k] / len(checkpoints)
 
-                # remove extra prefix in model keys
-                new_avg_state_dict = {
-                    k.removeprefix("model."): v
-                    for k, v in avg_state_dict.items()
-                    if k.startswith("model.")
+                # Keep only model keys (same prefix as in source .ckpt for loader compatibility)
+                avg_state_dict = {
+                    k: v for k, v in avg_state_dict.items() if k.startswith("model.")
                 }
 
-                avg_ckpt_path = Path(self.output_dir) / (
-                    f"{ckpt_callback.monitor.replace('/', '.')}."
-                    + f"ave_{len(checkpoints)}best.pth"
-                )
-                torch.save(new_avg_state_dict, avg_ckpt_path)
+                # Save as .ckpt (Lightning-style) so the same inference loader works
+                monitor_name = ckpt_callback.monitor.replace("/", ".")
+                avg_filename = f"{monitor_name}.ave_{len(checkpoints)}best.ckpt"
+                avg_ckpt_path = Path(self.output_dir) / avg_filename
+                out = {"state_dict": avg_state_dict}
+                if isinstance(source_ckpt_full, dict) and "hyper_parameters" in source_ckpt_full:
+                    out["hyper_parameters"] = source_ckpt_full["hyper_parameters"]
+                torch.save(out, avg_ckpt_path)
 
 
 @typechecked
@@ -176,6 +179,10 @@ def get_default_callbacks(
 
     best_ckpt_callbacks = []
     for monitor, nbest, mode in best_model_criterion:
+        # Include metric value in filename (e.g. epoch3_step100_valid.loss_0.5134)
+        # Use monitor with "/" for placeholder so it matches callback_metrics key
+        monitor_safe = monitor.replace("/", ".")
+        filename = "epoch{epoch}_step{step}_" + monitor_safe + "_{" + monitor + ":.4f}"
         best_ckpt_callbacks.append(
             ModelCheckpoint(
                 save_top_k=nbest,
@@ -183,9 +190,7 @@ def get_default_callbacks(
                 mode=mode,  # "min" or "max"
                 dirpath=exp_dir,
                 save_last=False,
-                # Add monitor to filename to avoid overwriting
-                # when multiple metrics are used
-                filename="epoch{epoch}_step{step}_" + monitor.replace("/", "."),
+                filename=filename,
                 auto_insert_metric_name=False,
                 save_on_train_epoch_end=False,
                 save_weights_only=True,

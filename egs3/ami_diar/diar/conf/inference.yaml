@@ -1,0 +1,108 @@
+# Inference configuration for diarization
+# Run from egs3/ami_diar/diar; paths relative to cwd or set via train_config
+
+# Paths (defaults; override or resolved from train exp_dir when running pipeline)
+infer_dir: exp/full_training/infer
+# Use best checkpoint (lowest validation loss) instead of last.ckpt
+# Best checkpoint pattern: epoch{epoch}_step{step}_valid.loss_{value:.4f}.ckpt
+model_path: exp/full_training/epoch7_step14000_valid.loss_0.3632.ckpt
+# When running with only --infer_config (no --train_config), load model config from this file
+train_config_path: conf/tuning/train_full.yaml
+
+# Test dataset (used by diar infer stage; manifest_path can default to ${data_dir}/test_cuts.jsonl.gz)
+dataset:
+  test:
+    - name: test
+      dataset:
+        _target_: egs3.ami_diar.diar.src.dataset.DiarizationDataset
+        manifest_path: data/ami_lhotse/test_cuts.jsonl.gz
+        chunk_duration: null
+        chunk_shift: null
+        frame_shift: 0.02
+        max_speakers: 4
+        sample_rate: 16000
+
+# DataLoader
+dataloader:
+  test:
+    batch_size: 1
+    shuffle: false
+    num_workers: 2
+    pin_memory: true
+
+# Collate function
+collate_fn:
+  _target_: egs3.ami_diar.diar.src.dataset.collate_fn
+
+# Inference settings (DiariZen/pyannote-style: chunked segmentation, then clustering to reconcile speakers across chunks)
+inference:
+  # Chunked segmentation (inside DiarizationInference) to avoid OOM; full waveform loaded by dataset
+  chunk_duration: 20.0   # seconds per chunk for model forward
+  chunk_shift: 5.0      # seconds between chunk starts (overlap = chunk_duration - chunk_shift)
+  # Segmentation settings
+  binarization_threshold: 0.5  # Standard threshold for softmax probabilities. Model outputs should be in [0,1].
+  # Speaker embeddings + clustering: required to reconcile chunk-wise diarization into global speaker IDs (DiariZen/pyannote)
+  use_speaker_embeddings: true
+  # ESPnet-SPK model tag (downloads via espnet_model_zoo / Hugging Face). Set one of:
+  #   espnet/voxcelebs12_rawnet3            — no extra deps (recommended for inference)
+  #   espnet/voxcelebs12_ecapa_mel         — ECAPA-TDNN mel only
+  #   espnet/voxcelebs12_ecapa_wavlm_joint — best EER, requires: pip install s3prl (WavLM)
+  speaker_embedding_model_tag: espnet/voxcelebs12_rawnet3
+  # Path to local ESPnet2 speaker model .pth (optional; overrides model_tag if set)
+  embedding_exclude_overlap: true  # Exclude overlapping speech when extracting embeddings
+  # Per-chunk: median → binarize; exclude overlap; discard speaker if total duration < this (merge segments first)
+  embedding_min_speaker_duration_sec: 1.0
+  # Smoothing: "median" (kernel size in frames) or "hmm" (powerset HMM; disabled for now)
+  smoothing_embedding: median   # Per-chunk before embedding extraction: median | hmm
+  smoothing_post_oa: median     # After overlap-add: median | hmm
+  embedding_median_filter: 0   # Used when smoothing_embedding=median (0 = off)
+  embedding_dilation_size: 3   # Dilation kernel size (frames) after median; 0 = off (hyperopt best DER 18.58%)
+  embedding_erosion_size: 4    # Erosion kernel size (frames) after dilation; 0 = off
+  post_oa_median_filter: 0     # Used when smoothing_post_oa=median (0 = off)
+  post_oa_dilation_size: 3    # Dilation kernel size (frames) after post-OA median; 0 = off
+  post_oa_erosion_size: 1      # Erosion kernel size (frames) after post-OA dilation; 0 = off
+  # When either smoothing is "hmm", set path to (K, K) row-stochastic .npy (fit on train set)
+  hmm_transition_matrix_path: exp/full_training/hmm_transition.npy
+
+  # Clustering settings (assigns global speaker IDs from embeddings)
+  clustering_backend: vbx  # "ahc" (Agglomerative, standard), "spectral" (non-convex clusters), or "vbx" (VBx with cosine similarity)
+
+  # VBx clustering parameters (hyperopt best: DER 18.58%)
+  # VBx models speaker turns with HMM and uses variational inference. Uses cosine similarity scaled by fb.
+  vbx:
+    fa: 0.494    # False alarm probability (background speaker weight)
+    fb: 14.314   # Scaling factor for cosine similarity (higher = more confident in similarities)
+    loopP: 0.975 # Self-loop probability in HMM (higher = fewer speaker changes)
+    max_iter: 10 # Maximum VB iterations
+
+  # AHC clustering parameters (pyannote-style)
+  # How many speakers?
+  #   - Pyannote/DiariZen: use a distance_threshold so the dendrogram cut decides the number
+  #     of clusters (data-driven from embeddings). Set threshold to a float (e.g. 0.65).
+  #   - "auto": we estimate from segmentations (count channels with activity >= min_duration),
+  #     then pass that as n_clusters. Less like pyannote.
+  ahc:
+    min_speakers: 3   # Bounds when using n_clusters; also clamp threshold-based result to [min, max]
+    max_speakers: 5
+    metric: cosine
+    linkage: average
+    # Float = distance_threshold (pyannote-style: number of speakers from dendrogram). "auto" = estimate from segmentations.
+    threshold: 0.65
+
+  # Spectral clustering parameters (alternative to AHC; can handle non-convex clusters)
+  spectral:
+    min_speakers: 3   # Minimum number of clusters
+    max_speakers: 5   # Maximum number of clusters
+    affinity: rbf     # "rbf" (Gaussian), "nearest_neighbors", or "cosine"
+    gamma: 1.0        # RBF kernel parameter (when affinity="rbf")
+    n_neighbors: 10   # Number of neighbors (when affinity="nearest_neighbors")
+    
+  # Output format
+  output_format: rttm  # "rttm" or "json"
+  output_dir: ${infer_dir}/predictions
+
+# Device
+device: cuda  # "cuda" or "cpu"
+
+# Batch processing
+use_amp: true  # Use automatic mixed precision

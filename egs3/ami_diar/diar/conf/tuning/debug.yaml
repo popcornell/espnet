@@ -1,0 +1,151 @@
+# Debug configuration for quick testing
+# Minimal settings for fast iteration
+
+# Runtime settings (no task = use instantiate(model) instead of ESPnet2 Task)
+num_device: 1
+num_nodes: 1
+
+# Path scaffold (run from egs3/ami_diar/diar; recipe_dir can be set via env or defaults to .)
+recipe_dir: .
+ami_manifests_dir: /raid/users/popcornell/AMI
+data_dir: data/ami_lhotse
+exp_tag: debug_run
+exp_dir: exp/${exp_tag}
+stats_dir: ${exp_dir}/stats
+
+# Create dataset: symlink AMI IHM cuts so train_cuts/dev_cuts/test_cuts exist
+create_dataset:
+  func: egs3.ami_diar.diar.src.symlink_ami.symlink_ami_manifests
+  source_dir: ${ami_manifests_dir}
+  output_dir: ${data_dir}
+
+# Dataset definition (DataOrganizer format; uses lhotse manifests after create_dataset)
+dataset:
+  _target_: espnet3.components.data.data_organizer.DataOrganizer
+  train:
+    - name: train
+      dataset:
+        _target_: egs3.ami_diar.diar.src.dataset.DiarizationDataset
+        manifest_path: ${data_dir}/train_cuts.jsonl.gz
+        chunk_duration: 20.0
+        chunk_shift: 15.0  # 5 seconds overlap (20 - 15)
+        frame_shift: 0.02
+        max_speakers: 4
+        sample_rate: 16000
+  valid:
+    - name: valid
+      dataset:
+        _target_: egs3.ami_diar.diar.src.dataset.DiarizationDataset
+        manifest_path: ${data_dir}/dev_cuts.jsonl.gz
+        chunk_duration: 20.0   # Match training chunk size
+        chunk_shift: 15.0
+        frame_shift: 0.02
+        max_speakers: 4
+        sample_rate: 16000
+
+# DataLoader settings (collate_fn under dataloader for Lightning module)
+dataloader:
+  collate_fn:
+    _target_: egs3.ami_diar.diar.src.dataset.CollateFnWrapper
+  train:
+    iter_factory: null
+    batch_size: 2
+    shuffle: true
+    num_workers: 0
+    pin_memory: false
+    drop_last: true
+  valid:
+    iter_factory: null
+    batch_size: 1
+    shuffle: false
+    num_workers: 0
+    pin_memory: false
+
+# Model (wrapper returns loss/stats/weight for Lightning)
+model:
+  _target_: egs3.ami_diar.diar.src.diar_model.DiarizationTrainingModel
+
+  # SSL Frontend - using WavLM Base (smaller/faster than XEUS for debug)
+  ssl_model_name: wavlm_base
+  ssl_model_path: null
+  ssl_freeze: true  # Freeze SSL for faster debug
+  ssl_num_layers: 13
+  ssl_hidden_size: 768
+  ssl_layer_weights: true
+  ssl_feature_grad_mult: 1.0  # No gradient scaling when frozen
+
+  # Projection layer
+  projection_size: 128  # Smaller for debug (vs 256)
+
+  # Conformer encoder (reduced size)
+  conformer_num_blocks: 2  # Fewer blocks for debug (vs 4)
+  conformer_attention_heads: 4
+  conformer_ffn_units: 512  # Smaller FFN (vs 1024)
+  conformer_kernel_size: 31
+  conformer_dropout: 0.1
+
+  # Powerset classification
+  num_speakers: 4
+  max_speakers_per_frame: 2
+
+  # Training settings
+  loss_type: nll
+  cardinality_weight_type: uniform
+
+# Optimizer (only one since SSL is frozen)
+optimizer:
+  _target_: torch.optim.AdamW
+  lr: 0.001
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+
+# Learning rate scheduler
+scheduler:
+  _target_: torch.optim.lr_scheduler.CosineAnnealingLR
+  T_max: 5  # Updated to match max_epochs
+  eta_min: 0.0001
+
+# Lightning Trainer configuration (kwargs only; Trainer is built by ESPnet3)
+# Validation uses full-length recordings (chunk_duration: null) and can OOM on GPU.
+# Inference is chunked inside DiarizationInference (DiariZen) so no OOM there.
+trainer:
+  max_epochs: 5  # Increased from 3
+  accelerator: auto  # use "cpu" if validation OOMs (valid = full recordings)
+  devices: 1
+  num_nodes: 1
+  gradient_clip_val: 5.0
+  gradient_clip_algorithm: norm
+  accumulate_grad_batches: 1
+  val_check_interval: 1.0
+  check_val_every_n_epoch: 1
+  log_every_n_steps: 10
+  enable_checkpointing: true
+  enable_progress_bar: true
+  enable_model_summary: true
+  deterministic: false
+  precision: 32  # Full precision for debug (faster on CPU/simpler)
+  limit_train_batches: 200  # Increased 10x from 20 for longer debug training
+  limit_val_batches: 50     # Increased 10x from 5
+  # callbacks: use default from get_default_callbacks (avoids duplicate ModelCheckpoint)
+
+# Logging
+logger:
+  _target_: lightning.pytorch.loggers.TensorBoardLogger
+  save_dir: ${exp_dir}/logs
+  name: debug
+  version: null
+
+# Seed
+seed: 42
+
+# Best model selection for checkpoints
+best_model_criterion:
+  - [valid/loss, 1, min]
+
+# Stats collection
+collect_stats: false
+
+# Model saving
+save_model:
+  save_dir: ${exp_dir}/final_model
+  save_filename: model.pth

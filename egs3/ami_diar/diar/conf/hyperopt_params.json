@@ -1,0 +1,61 @@
+{
+  "description": "Parameter search space for VBx + erosion/dilation + AHC threshold (and clustering_backend)",
+  "optuna_space": {
+    "embedding_dilation_size": {
+      "type": "int",
+      "low": 0,
+      "high": 10,
+      "description": "Dilation kernel size for embedding extraction (0 = off)"
+    },
+    "embedding_erosion_size": {
+      "type": "int",
+      "low": 0,
+      "high": 10,
+      "description": "Erosion kernel size after dilation for embedding extraction (0 = off)"
+    },
+    "post_oa_dilation_size": {
+      "type": "int",
+      "low": 0,
+      "high": 10,
+      "description": "Dilation kernel size after overlap-add (0 = off)"
+    },
+    "post_oa_erosion_size": {
+      "type": "int",
+      "low": 0,
+      "high": 10,
+      "description": "Erosion kernel size after post-OA dilation (0 = off)"
+    },
+    "ahc": {
+      "type": "dict",
+      "params": {
+        "threshold": {
+          "type": "categorical",
+          "choices": ["auto", 0.65, 0.7, 0.75, 0.8]
+        }
+      }
+    },
+    "vbx": {
+      "type": "dict",
+      "params": {
+        "fa": {
+          "type": "float",
+          "low": 0.1,
+          "high": 0.5,
+          "description": "False alarm probability (background speaker weight)"
+        },
+        "fb": {
+          "type": "float",
+          "low": 10.0,
+          "high": 25.0,
+          "description": "Scaling factor for cosine similarity (higher = more confident)"
+        },
+        "loopP": {
+          "type": "float",
+          "low": 0.95,
+          "high": 0.99,
+          "description": "Self-loop probability in HMM (higher = fewer speaker changes)"
+        }
+      }
+    }
+  }
+}

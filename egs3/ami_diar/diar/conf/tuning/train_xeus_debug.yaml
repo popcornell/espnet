@@ -1,0 +1,150 @@
+# XEUS debug run: same as full_training (WavLM) with minimal changes for XEUS frontend.
+# Run with GPU 1: CUDA_VISIBLE_DEVICES=1 python run.py --stages create_dataset,train --train_config conf/tuning/train_xeus_debug.yaml [model.ssl_model_path=/path/to/xeus.pt]
+# If XEUS_CHECKPOINT is set: ... model.ssl_model_path=${XEUS_CHECKPOINT}
+
+# Runtime settings
+num_device: 1
+num_nodes: 1
+
+# Path scaffold (run from egs3/ami_diar/diar)
+recipe_dir: .
+ami_manifests_dir: /raid/users/popcornell/AMI
+data_dir: data/ami_lhotse
+exp_tag: xeus_debug
+exp_dir: exp/${exp_tag}
+stats_dir: ${exp_dir}/stats
+
+# Create dataset: symlink AMI IHM cuts
+create_dataset:
+  func: egs3.ami_diar.diar.src.symlink_ami.symlink_ami_manifests
+  source_dir: ${ami_manifests_dir}
+  output_dir: ${data_dir}
+
+# Dataset definition (same as full_training)
+dataset:
+  _target_: espnet3.components.data.data_organizer.DataOrganizer
+  train:
+    - name: train
+      dataset:
+        _target_: egs3.ami_diar.diar.src.dataset.DiarizationDataset
+        manifest_path: ${data_dir}/train_cuts.jsonl.gz
+        chunk_duration: 20.0
+        chunk_shift: 5.0
+        frame_shift: 0.02
+        max_speakers: 4
+        sample_rate: 16000
+  valid:
+    - name: valid
+      dataset:
+        _target_: egs3.ami_diar.diar.src.dataset.DiarizationDataset
+        manifest_path: ${data_dir}/dev_cuts.jsonl.gz
+        chunk_duration: 20.0
+        chunk_shift: 15.0
+        frame_shift: 0.02
+        max_speakers: 4
+        sample_rate: 16000
+
+# DataLoader (small batch for debug)
+dataloader:
+  collate_fn:
+    _target_: egs3.ami_diar.diar.src.dataset.CollateFnWrapper
+  train:
+    iter_factory: null
+    batch_size: 4
+    shuffle: true
+    num_workers: 2
+    pin_memory: true
+    drop_last: true
+  valid:
+    iter_factory: null
+    batch_size: 4
+    shuffle: false
+    num_workers: 2
+    pin_memory: true
+    drop_last: false
+
+# Model: same as full_training but XEUS frontend (minimal diff)
+model:
+  _target_: egs3.ami_diar.diar.src.diar_model.DiarizationTrainingModel
+
+  # SSL Frontend - XEUS (pass model.ssl_model_path via CLI or set XEUS_CHECKPOINT and override)
+  ssl_model_name: xeus
+  ssl_model_path: null  # Required for XEUS: set via CLI model.ssl_model_path=/path/to/xeus.pt or env XEUS_CHECKPOINT
+  ssl_freeze: false
+  ssl_num_layers: 25   # XEUS: 24 transformer + 1 CNN
+  ssl_hidden_size: 1024
+  ssl_layer_weights: true
+  ssl_feature_grad_mult: 0.1
+
+  # Projection layer (same as full_training)
+  projection_size: 256
+
+  # Conformer encoder (same as full_training)
+  conformer_num_blocks: 4
+  conformer_attention_heads: 4
+  conformer_ffn_units: 1024
+  conformer_kernel_size: 31
+  conformer_dropout: 0.1
+
+  # Powerset classification
+  num_speakers: 4
+  max_speakers_per_frame: 2
+
+  # Training settings
+  loss_type: nll
+  cardinality_weight_type: uniform
+
+# Optimizer (same as full_training)
+optimizer:
+  _target_: torch.optim.AdamW
+  lr: 0.0001
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+
+# Scheduler
+scheduler:
+  _target_: torch.optim.lr_scheduler.CosineAnnealingLR
+  T_max: 3
+  eta_min: 0.00001
+
+# Trainer: debug run (few epochs, limited batches)
+trainer:
+  max_epochs: 3
+  accelerator: auto
+  devices: 1
+  num_nodes: 1
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: norm
+  accumulate_grad_batches: 1
+  val_check_interval: 1.0
+  check_val_every_n_epoch: 1
+  log_every_n_steps: 10
+  enable_checkpointing: true
+  enable_progress_bar: true
+  enable_model_summary: true
+  deterministic: false
+  precision: 16-mixed
+  limit_train_batches: 100
+  limit_val_batches: 20
+
+# Logging
+logger:
+  _target_: lightning.pytorch.loggers.TensorBoardLogger
+  save_dir: ${exp_dir}/logs
+  name: xeus_debug
+  version: null
+
+# Seed
+seed: 42
+
+# Best model selection
+best_model_criterion:
+  - [valid/loss, 1, min]
+
+# Stats collection
+collect_stats: false
+
+# Model saving
+save_model:
+  save_dir: ${exp_dir}/final_model
+  save_filename: model.pth

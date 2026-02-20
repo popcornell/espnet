@@ -1,0 +1,126 @@
+# XEUS training with minimal GPU memory (for OOM on 40GB or smaller GPUs)
+# Use this if train_xeus.yaml still OOMs. Optionally before running:
+#   export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+# Differences: chunk_duration 12s (vs 15s), same batch 2 + accum 8.
+
+# Runtime settings
+num_device: 1
+num_nodes: 1
+
+recipe_dir: .
+ami_manifests_dir: /raid/users/popcornell/AMI
+data_dir: data/ami_lhotse
+exp_tag: xeus_full_training_lowmem
+exp_dir: exp/${exp_tag}
+stats_dir: ${exp_dir}/stats
+
+create_dataset:
+  func: egs3.ami_diar.diar.src.symlink_ami.symlink_ami_manifests
+  source_dir: ${ami_manifests_dir}
+  output_dir: ${data_dir}
+
+dataset:
+  _target_: espnet3.components.data.data_organizer.DataOrganizer
+  train:
+    - name: train
+      dataset:
+        _target_: egs3.ami_diar.diar.src.dataset.DiarizationDataset
+        manifest_path: ${data_dir}/train_cuts.jsonl.gz
+        chunk_duration: 12.0   # Shorter = less attention memory (O(T^2))
+        chunk_shift: 4.0
+        frame_shift: 0.02
+        max_speakers: 4
+        sample_rate: 16000
+  valid:
+    - name: valid
+      dataset:
+        _target_: egs3.ami_diar.diar.src.dataset.DiarizationDataset
+        manifest_path: ${data_dir}/dev_cuts.jsonl.gz
+        chunk_duration: 12.0
+        chunk_shift: 8.0
+        frame_shift: 0.02
+        max_speakers: 4
+        sample_rate: 16000
+
+dataloader:
+  collate_fn:
+    _target_: egs3.ami_diar.diar.src.dataset.CollateFnWrapper
+  train:
+    iter_factory: null
+    batch_size: 2
+    shuffle: true
+    num_workers: 4
+    pin_memory: true
+    drop_last: true
+  valid:
+    iter_factory: null
+    batch_size: 2
+    shuffle: false
+    num_workers: 4
+    pin_memory: true
+    drop_last: false
+
+model:
+  _target_: egs3.ami_diar.diar.src.diar_model.DiarizationTrainingModel
+  ssl_model_name: xeus
+  ssl_model_path: null
+  ssl_freeze: false
+  ssl_num_layers: 25
+  ssl_hidden_size: 1024
+  ssl_layer_weights: true
+  ssl_feature_grad_mult: 0.1
+  projection_size: 256
+  conformer_num_blocks: 4
+  conformer_attention_heads: 4
+  conformer_ffn_units: 1024
+  conformer_kernel_size: 31
+  conformer_dropout: 0.1
+  num_speakers: 4
+  max_speakers_per_frame: 2
+  loss_type: nll
+  cardinality_weight_type: uniform
+
+optimizer:
+  _target_: torch.optim.AdamW
+  lr: 0.0001
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+
+scheduler:
+  _target_: torch.optim.lr_scheduler.CosineAnnealingLR
+  T_max: 100
+  eta_min: 0.00001
+
+trainer:
+  max_epochs: 20
+  accelerator: auto
+  devices: 1
+  num_nodes: 1
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: norm
+  accumulate_grad_batches: 8
+  val_check_interval: 1.0
+  check_val_every_n_epoch: 1
+  log_every_n_steps: 50
+  enable_checkpointing: true
+  enable_progress_bar: true
+  enable_model_summary: true
+  deterministic: false
+  precision: 16-mixed
+
+logger:
+  _target_: lightning.pytorch.loggers.TensorBoardLogger
+  save_dir: ${exp_dir}/logs
+  name: xeus_full_training_lowmem
+  version: null
+
+seed: 42
+
+best_model_criterion:
+  - [valid/loss, 3, min]
+
+collect_stats: false
+
+save_model:
+  save_dir: ${exp_dir}/final_model
+  save_filename: model.pth
